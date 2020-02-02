@@ -1,0 +1,67 @@
+---
+title: "MX_Exact_Logistic"
+author: "Yang Meng"
+date: "9/26/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Abstract
+
+The article uses Model_X knockoff filter to select variables in logistic regression, with small amplitude. When the amplitude is as small as $\sqrt{\frac{logp}{n}}$, the filter is conservative.
+
+```{r, message=F}
+library(knockoff)
+library(glmnet)
+library(MASS)
+```
+
+# 1. Weak Amplitude
+
+$logit(y)=X\beta+\epsilon$, $X\sim N(0,\Sigma)$
+
+$p = 300$, $n = 200$, $k=15$(non-null variables)
+
+Amplitude = $\sqrt{\frac{logp}{n}}$
+
+$FDP=0.5$
+
+```{r, message=F}
+#Simulating data X and logistic y
+set.seed(0)
+p=300; n=200; k=15
+rho=0.4; amplitude=sqrt(2*log(p)/n)
+Sigma = toeplitz(rho^(0:(p-1)))
+X = matrix(rnorm(n*p),n) %*% chol(Sigma)
+nonzero = sample(p, k)
+beta = amplitude * (1:p %in% nonzero)
+y = X %*% beta + rnorm(n)
+y = as.numeric(exp(y) / (1+exp(y)) > .5)
+#Generate X.tilt
+set.seed(0)
+s <- create.solve_sdp(Sigma)
+mu = X - X %*% solve(Sigma) %*% diag(s,p)
+V = 2 * diag(s,p) - diag(s,p) %*% solve(Sigma) %*% diag(s,p)
+X.t = matrix(NA, nrow=n, ncol=p)
+for(i in 1:n) X.t[i,] = mvrnorm(n=1, mu[i,], V)
+#Variable Selection
+set.seed(0)
+XX = cbind(X, X.t)
+cv.lasso <- cv.glmnet(XX, y, alpha = 1, family = "binomial")
+fit = glmnet(XX, y, family = "binomial", alpha = 1, lambda = cv.lasso$lambda.min)
+b = as.vector(coef(fit))[-1]
+w = abs(b[1:p]) - abs(b[(p+1):(2*p)])
+threshold = function(w, q=.5){
+  for (t in sort(abs(w[w!=0]))){
+    if (((1 + sum(w<=-t)) / sum(w>=t)) <= q) return(t)
+  }}
+myresult = which(w>=threshold(w))
+myresult
+sort(nonzero)
+#fdp
+fdp = function(selected) sum(beta[selected]==0) / max(1, length(selected))
+fdp(myresult)
+```
